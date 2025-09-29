@@ -2,8 +2,9 @@ name: pdf2htmlEX Win64 from witwall
 
 on:
   push:
-    branches: [ master, main ]
-    tags:     [ 'v*' ]       # run on version tags too
+    branches: [ main, master ]
+    tags:
+      - 'v*'          # push a tag like v1.0 to auto-release
   workflow_dispatch:
 
 permissions:
@@ -11,14 +12,14 @@ permissions:
 
 env:
   SRC_REPO: witwall/pdf2htmlEX   # change to your fork if you want
-  SRC_REF:  master               # or pin a tag/commit
+  SRC_REF:  master               # tag/branch/commit
 
 jobs:
   build64:
     runs-on: windows-latest
 
     steps:
-      - name: Checkout (workflow repo)
+      - name: Checkout (this repo)
         uses: actions/checkout@v4
 
       - name: Setup MSYS2 (MINGW64)
@@ -29,6 +30,7 @@ jobs:
           release: true
           path-type: minimal
           cache: true
+          # NOTE: No comments or '#' allowed in this list.
           install: >
             base-devel git cmake ninja zip
             mingw-w64-x86_64-toolchain mingw-w64-x86_64-pkgconf
@@ -40,7 +42,7 @@ jobs:
             mingw-w64-x86_64-lcms2 mingw-w64-x86_64-harfbuzz
             mingw-w64-x86_64-fribidi mingw-w64-x86_64-zlib
             mingw-w64-x86_64-fontforge mingw-w64-x86_64-libspiro
-            mingw-w64-x86_64-ntldd-git mingw-w64-x86_64-tools-git
+            mingw-w64-x86_64-ntldd mingw-w64-x86_64-tools-git
 
       - name: Clone witwall/pdf2htmlEX
         shell: msys2 {0}
