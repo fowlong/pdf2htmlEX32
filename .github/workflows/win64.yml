@@ -2,77 +2,73 @@ name: pdf2htmlEX Win64 from witwall
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ master, main ]
+    tags:     [ 'v*' ]       # run on version tags too
   workflow_dispatch:
-  tags:
-    - 'v*'
 
 permissions:
   contents: write
 
 env:
-  SRC_REPO: witwall/pdf2htmlEX   # change if you fork
-  SRC_REF:  master               # or a tag/commit for reproducible builds
+  SRC_REPO: witwall/pdf2htmlEX   # change to your fork if you want
+  SRC_REF:  master               # or pin a tag/commit
 
 jobs:
   build64:
     runs-on: windows-latest
 
     steps:
-      - name: Checkout workflow repo (for this yml only)
+      - name: Checkout (workflow repo)
         uses: actions/checkout@v4
 
       - name: Setup MSYS2 (MINGW64)
         uses: msys2/setup-msys2@v2
         with:
-            msystem: MINGW64
-            update: true
-            release: true
-            path-type: minimal
-            cache: true
-            # NOTE: no inline comments here; every token is parsed as a package name.
-            install: >
-              base-devel git cmake ninja zip
-              mingw-w64-x86_64-toolchain mingw-w64-x86_64-pkgconf
-              mingw-w64-x86_64-poppler mingw-w64-x86_64-poppler-data
-              mingw-w64-x86_64-cairo mingw-w64-x86_64-freetype
-              mingw-w64-x86_64-libpng mingw-w64-x86_64-libjpeg-turbo
-              mingw-w64-x86_64-libxml2 mingw-w64-x86_64-icu
-              mingw-w64-x86_64-glib2 mingw-w64-x86_64-openjpeg2
-              mingw-w64-x86_64-lcms2 mingw-w64-x86_64-harfbuzz
-              mingw-w64-x86_64-fribidi mingw-w64-x86_64-zlib
-              mingw-w64-x86_64-fontforge mingw-w64-x86_64-libspiro
-              mingw-w64-x86_64-ntldd-git mingw-w64-x86_64-tools-git
+          msystem: MINGW64
+          update: true
+          release: true
+          path-type: minimal
+          cache: true
+          install: >
+            base-devel git cmake ninja zip
+            mingw-w64-x86_64-toolchain mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-poppler mingw-w64-x86_64-poppler-data
+            mingw-w64-x86_64-cairo mingw-w64-x86_64-freetype
+            mingw-w64-x86_64-libpng mingw-w64-x86_64-libjpeg-turbo
+            mingw-w64-x86_64-libxml2 mingw-w64-x86_64-icu
+            mingw-w64-x86_64-glib2 mingw-w64-x86_64-openjpeg2
+            mingw-w64-x86_64-lcms2 mingw-w64-x86_64-harfbuzz
+            mingw-w64-x86_64-fribidi mingw-w64-x86_64-zlib
+            mingw-w64-x86_64-fontforge mingw-w64-x86_64-libspiro
+            mingw-w64-x86_64-ntldd-git mingw-w64-x86_64-tools-git
 
-      - name: Clone source (witwall)
+      - name: Clone witwall/pdf2htmlEX
         shell: msys2 {0}
         run: |
           set -e
           git clone --depth 1 --branch "$SRC_REF" "https://github.com/$SRC_REPO.git" src
           echo "SRCDIR=$PWD/src" >> $GITHUB_ENV
 
-      # Some MSYS2 builds ship only versioned import libs like libfontforge-4.dll.a.
-      # These two shims rename/synthesize generic import libs so -lfontforge/-lgdraw link cleanly.
-      - name: Create FontForge import-lib shims (if needed)
+      - name: FontForge import-lib shims (if needed)
         shell: msys2 {0}
         run: |
           set -e
           mkdir -p shims
           cp -u /mingw64/lib/libfontforge*.dll.a shims/libfontforge.a 2>/dev/null || true
           cp -u /mingw64/lib/libgdraw*.dll.a     shims/libgdraw.a     2>/dev/null || true
-          if [ ! -f shims/libfontforge.a ] && [ -f /mingw64/bin/libfontforge-*.dll ]; then
+          if [ ! -f shims/libfontforge.a ] && ls /mingw64/bin/libfontforge-*.dll >/dev/null 2>&1; then
             ff=$(ls /mingw64/bin/libfontforge-*.dll | head -n1)
             gendef "$ff" - > shims/libfontforge.def
             dlltool -d shims/libfontforge.def -l shims/libfontforge.a
           fi
-          if [ ! -f shims/libgdraw.a ] && [ -f /mingw64/bin/libgdraw-*.dll ]; then
+          if [ ! -f shims/libgdraw.a ] && ls /mingw64/bin/libgdraw-*.dll >/dev/null 2>&1; then
             gd=$(ls /mingw64/bin/libgdraw-*.dll | head -n1)
             gendef "$gd" - > shims/libgdraw.def
             dlltool -d shims/libgdraw.def -l shims/libgdraw.a
           fi
           echo "CMAKE_LIBRARY_PATH=$PWD/shims" >> $GITHUB_ENV
 
-      - name: Configure (Ninja)
+      - name: Configure (CMake + Ninja)
         shell: msys2 {0}
         env:
           SRCDIR: ${{ env.SRCDIR }}
