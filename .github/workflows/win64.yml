@@ -1,100 +1,144 @@
-name: pdf2htmlEX Win64 (witwall)
+name: Build pdf2htmlEX (Win64, MSYS2)
 
 on:
-  workflow_dispatch:   # run manually from Actions tab
+  push:
+  workflow_dispatch:
+  # Tag push (optional: publish release asset)
+  create:
 
 permissions:
-  contents: write
+  contents: write   # needed only for the "release on tag" step; harmless otherwise
 
 jobs:
-  build:
+  win64:
     runs-on: windows-latest
 
     steps:
-      # Clean any old working dir so checkout doesn't collide
-      - name: Clean src dir
-        shell: bash
-        run: rm -rf src
-
-      # Pull the *working* repo we want to compile (not your workflow repo)
-      - name: Checkout witwall/pdf2htmlEX
+      - name: Checkout this repo
         uses: actions/checkout@v4
-        with:
-          repository: witwall/pdf2htmlEX
-          ref: master          # pin a tag/commit if you prefer
-          path: src
-          fetch-depth: 1
 
-      - name: Setup MSYS2 (MINGW64)
+      - name: Set up MSYS2 (MINGW64)
         uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
-          # set to false if you truly want to skip system upgrades
           update: true
+          path-type: minimal
           release: true
           cache: true
-          path-type: minimal
           install: >
             base-devel git cmake ninja zip
-            mingw-w64-x86_64-toolchain mingw-w64-x86_64-pkgconf
-            mingw-w64-x86_64-poppler mingw-w64-x86_64-poppler-data
-            mingw-w64-x86_64-cairo mingw-w64-x86_64-freetype
-            mingw-w64-x86_64-libpng mingw-w64-x86_64-libjpeg-turbo
-            mingw-w64-x86_64-libxml2 mingw-w64-x86_64-icu
-            mingw-w64-x86_64-glib2 mingw-w64-x86_64-openjpeg2
-            mingw-w64-x86_64-lcms2 mingw-w64-x86_64-harfbuzz
-            mingw-w64-x86_64-fribidi mingw-w64-x86_64-zlib
-            mingw-w64-x86_64-fontforge mingw-w64-x86_64-libspiro
-            mingw-w64-x86_64-ntldd-git mingw-w64-x86_64-tools-git
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-poppler
+            mingw-w64-x86_64-poppler-data
+            mingw-w64-x86_64-cairo
+            mingw-w64-x86_64-freetype
+            mingw-w64-x86_64-libpng
+            mingw-w64-x86_64-libjpeg-turbo
+            mingw-w64-x86_64-libxml2
+            mingw-w64-x86_64-icu
+            mingw-w64-x86_64-glib2
+            mingw-w64-x86_64-openjpeg2
+            mingw-w64-x86_64-lcms2
+            mingw-w64-x86_64-harfbuzz
+            mingw-w64-x86_64-fribidi
+            mingw-w64-x86_64-zlib
+            mingw-w64-x86_64-fontforge
+            mingw-w64-x86_64-libspiro
+            mingw-w64-x86_64-ntldd-git
 
-      # Some MSYS2 builds ship fontforge only as DLL; create import libs if missing
-      - name: FontForge import-lib shims (if needed)
+      - name: Clean any previous build dirs
+        shell: msys2 {0}
+        run: |
+          rm -rf src build dist shims || true
+          mkdir -p dist
+
+      - name: Clone witwall/pdf2htmlEX (old but working)
+        shell: msys2 {0}
+        run: |
+          git clone --depth 1 https://github.com/witwall/pdf2htmlEX.git src
+
+      # The old tree asks for ancient CMake. Bump to 3.5 so modern CMake is happy.
+      - name: Patch cmake_minimum_required to 3.5 (recursively)
         shell: msys2 {0}
         run: |
           set -e
-          mkdir -p /mingw64/lib
-          if [ ! -f /mingw64/lib/libfontforge.dll.a ] && ls /mingw64/bin/libfontforge-*.dll >/dev/null 2>&1; then
-            ff=$(ls /mingw64/bin/libfontforge-*.dll | head -n1)
-            gendef "$ff" - > /tmp/ff.def
-            dlltool -d /tmp/ff.def -l /mingw64/lib/libfontforge.dll.a
-          fi
-          if [ ! -f /mingw64/lib/libgdraw.dll.a ] && ls /mingw64/bin/libgdraw-*.dll >/dev/null 2>&1; then
-            gd=$(ls /mingw64/bin/libgdraw-*.dll | head -n1)
-            gendef "$gd" - > /tmp/gd.def
-            dlltool -d /tmp/gd.def -l /mingw64/lib/libgdraw.dll.a
-          fi
+          find "$PWD/src" -name CMakeLists.txt -print \
+            -exec sed -i -E 's/cmake_minimum_required\s*\(\s*VERSION\s*[0-9.]+\)/cmake_minimum_required(VERSION 3.5)/g' {} +
+
+      # Safety shim: if build wants "libfontforge.a" etc, point it at import libs
+      - name: Create import-lib shims (fontforge/gdraw/spiro/uninameslist)
+        shell: msys2 {0}
+        run: |
+          set -e
+          mkdir -p shims
+          copy_one() {
+            out="$1"; shift
+            for pat in "$@"; do
+              for f in $pat; do
+                if [ -f "$f" ]; then cp -u "$f" "$out"; return 0; fi
+              done
+            done
+            return 0
+          }
+          copy_one shims/libfontforge.a     /mingw64/lib/libfontforge*.dll.a /mingw64/lib/libfontforge.a
+          copy_one shims/libgdraw.a         /mingw64/lib/libgdraw*.dll.a     /mingw64/lib/libgdraw.a
+          copy_one shims/libspiro.a         /mingw64/lib/libspiro*.dll.a     /mingw64/lib/libspiro.a
+          copy_one shims/libuninameslist.a  /mingw64/lib/libuninameslist*.dll.a /mingw64/lib/libuninameslist.a
+          ls -l shims || true
 
       - name: Configure (CMake + Ninja)
         shell: msys2 {0}
+        env:
+          PKG_CONFIG_PATH: /mingw64/lib/pkgconfig
         run: |
           set -e
           cmake -S "$PWD/src" -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_PREFIX_PATH=/mingw64 \
-            -DCMAKE_CXX_STANDARD=17
+            -DCMAKE_CXX_STANDARD=17 \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -DCMAKE_LIBRARY_PATH="$PWD/shims"
 
       - name: Build
         shell: msys2 {0}
         run: |
           set -e
           cmake --build build --parallel
-          test -f build/pdf2htmlEX.exe || test -f build/src/pdf2htmlEX.exe
+          EXE=""
+          test -f build/pdf2htmlEX.exe      && EXE="build/pdf2htmlEX.exe"
+          test -z "$EXE" && test -f build/src/pdf2htmlEX.exe && EXE="build/src/pdf2htmlEX.exe"
+          if [ -z "$EXE" ]; then echo "pdf2htmlEX.exe not found"; exit 2; fi
+          echo "EXE=$EXE" >> $GITHUB_ENV
 
-      - name: Package (portable zip)
+      - name: Package portable zip (exe + DLLs)
         shell: msys2 {0}
         run: |
           set -e
-          EXE="build/pdf2htmlEX.exe"; [ -f "$EXE" ] || EXE="build/src/pdf2htmlEX.exe"
-          mkdir -p dist/bin
-          cp "$EXE" dist/
-          # pull in runtime DLLs from mingw64/bin
-          ntldd -R "$EXE" \
-            | awk '/mingw.*\\/bin/ { for(i=1;i<=NF;i++) if ($i ~ /mingw.*\\/bin\\//) print $i }' \
-            | sort -u | while read -r dll; do [ -f "$dll" ] && cp -u "$dll" dist/bin/; done
-          (cd dist && zip -r ../pdf2htmlEX-win64.zip .)
+          mkdir -p dist
+          cp -u "$EXE" dist/
+          # Pull in dependent DLLs
+          ntldd -R "$EXE" | awk '/=>/ && /mingw64/ {print $3}' | while read -r dll; do
+            [ -f "$dll" ] && cp -u "$dll" dist/
+          done
+          # poppler-data (cMaps etc.) — optional but useful
+          if [ -d /mingw64/share/poppler ]; then
+            mkdir -p dist/share
+            cp -r /mingw64/share/poppler dist/share/
+          fi
+          ( cd dist && zip -9r ../pdf2htmlEX-win64.zip . )
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: pdf2htmlEX-win64
-          path: pdf2htmlEX-win64.zip
+          path: |
+            pdf2htmlEX-win64.zip
+
+      # Optional: attach zip to a tag release (push a tag like v0.0.1)
+      - name: Release on tag
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: pdf2htmlEX-win64.zip
+          generate_release_notes: true
